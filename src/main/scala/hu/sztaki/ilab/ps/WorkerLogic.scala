@@ -1,9 +1,12 @@
 package hu.sztaki.ilab.ps
 
 import java.util.concurrent.locks.{Condition, ReentrantLock}
+
+import org.apache.flink.api.common.functions.RuntimeContext
+
 import scala.collection.mutable
-import scala.concurrent.{CanAwait, ExecutionContext, Future}
 import scala.concurrent.duration.Duration
+import scala.concurrent.{CanAwait, ExecutionContext, Future}
 import scala.util.{Success, Try}
 
 /**
@@ -22,7 +25,7 @@ trait WorkerLogic[T, P, WOut] extends Serializable {
   /**
     * Method called when the Flink operator is created
     */
-  def open(): Unit ={}
+  def open(runtimeContext: RuntimeContext): Unit = {}
 
   /**
     * Method called when new data arrives.

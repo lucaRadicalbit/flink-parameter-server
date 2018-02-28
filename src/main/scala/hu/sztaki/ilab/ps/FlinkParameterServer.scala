@@ -228,7 +228,7 @@ object FlinkParameterServer {
 
 
             override def open(parameters: Configuration): Unit = {
-              logic.open()
+              logic.open(getRuntimeContext)
               psClient.setPartitionId(getRuntimeContext.getIndexOfThisSubtask)
             }
 
@@ -330,6 +330,7 @@ object FlinkParameterServer {
 
     trainingData
       .map(x => x)
+      .forward
       .setParallelism(workerParallelism)
       .iterate((x: ConnectedStreams[T, PStoWorker]) => stepFunc(x), iterationWaitTime)
   }
@@ -394,6 +395,7 @@ object FlinkParameterServer {
 
     type ModelOrT = Either[Either[EOF, (Int, P)], T]
 
+    /* Take the model stream and wrap it into LEFT */
     val modelWithEOF: DataStream[ModelOrT] =
       model.rebalance.map(x => x).setParallelism(workerParallelism)
         .forward.flatMap(new RichFlatMapFunction[(Int, P), ModelOrT] {
@@ -404,20 +406,21 @@ object FlinkParameterServer {
           if (collector == null) {
             collector = out
           }
-          out.collect(Left(Right(value)))
+          out.collect(Left(Right(value))) // < --- LEFT
         }
 
         override def close(): Unit = {
           if (collector != null) {
-            collector.collect(Left(Left(EOF())))
+            collector.collect(Left(Left(EOF()))) // < --- LEFT
           } else {
             throw new IllegalStateException("There must be a parameter per model partition when loading model.")
           }
         }
       }).setParallelism(workerParallelism)
 
+    /* Take the training data stream and wrap it into RIGHT */
     val trainingDataPrepared: DataStream[ModelOrT] = trainingData.rebalance.map(x => x).setParallelism(workerParallelism)
-      .forward.map(Right(_))
+      .forward.map(Right(_)) // < --- RIGHT
 
     // TODO do not wrap PSClient every time it's used
     def wrapPSClient(ps: ParameterServerClient[Either[EOF, P], WOut]): ParameterServerClient[P, WOut] =
@@ -601,21 +604,21 @@ object FlinkParameterServer {
     * @return
     * Transform [[DataStream]] consisting of the worker and PS output.
     */
-  def transformWithDoubleModelLoad[T, P, PSOut, WOut] (model: DataStream[Either[(Int, P), (Int, P)]])
-                                                             (trainingData: DataStream[T],
-                                                              workerLogic: BaseMFWorkerLogic[T, P, WOut],
-                                                              psLogic: ParameterServerLogic[P, PSOut],
-                                                              paramPartitioner: WorkerToPS[P] => Int,
-                                                              wInPartition: PSToWorker[P] => Int,
-                                                              workerParallelism: Int,
-                                                              psParallelism: Int,
-                                                              iterationWaitTime: Long)
-                                                             (implicit
-                                                              tiT: TypeInformation[T],
-                                                              tiP: TypeInformation[P],
-                                                              tiPSOut: TypeInformation[PSOut],
-                                                              tiWOut: TypeInformation[WOut]
-                                                             ): DataStream[Either[WOut, PSOut]] = {
+  def transformWithDoubleModelLoad[T, P, PSOut, WOut](model: DataStream[Either[(Int, P), (Int, P)]])
+                                                     (trainingData: DataStream[T],
+                                                      workerLogic: BaseMFWorkerLogic[T, P, WOut],
+                                                      psLogic: ParameterServerLogic[P, PSOut],
+                                                      paramPartitioner: WorkerToPS[P] => Int,
+                                                      wInPartition: PSToWorker[P] => Int,
+                                                      workerParallelism: Int,
+                                                      psParallelism: Int,
+                                                      iterationWaitTime: Long)
+                                                     (implicit
+                                                      tiT: TypeInformation[T],
+                                                      tiP: TypeInformation[P],
+                                                      tiPSOut: TypeInformation[PSOut],
+                                                      tiWOut: TypeInformation[WOut]
+                                                     ): DataStream[Either[WOut, PSOut]] = {
 
     sealed abstract class ModelOrT extends Serializable
     case class ModelWorkerData(id: Int, param: P) extends ModelOrT
